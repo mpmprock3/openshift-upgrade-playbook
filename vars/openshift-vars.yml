@@ -1,0 +1,150 @@
+---
+# OpenShift Cluster Configuration Variables
+# =========================================
+
+# Cluster connection details
+cluster_api_url: "https://api.your-cluster.example.com:6443"
+cluster_token: "{{ vault_openshift_token | default('YOUR_OPENSHIFT_TOKEN_HERE') }}"
+validate_ssl_certs: true
+
+# Upgrade behavior settings
+fail_on_pre_check_errors: true
+fail_on_post_check_errors: true
+post_upgrade_wait_time: 60
+
+# Timeout settings (in seconds)
+api_timeout: 30
+health_check_timeout: 120
+
+# Cluster specific settings
+expected_master_nodes: 3
+expected_worker_nodes: 3
+minimum_etcd_nodes: 3
+
+# Critical namespaces to monitor
+critical_namespaces:
+  - openshift-kube-apiserver
+  - openshift-kube-controller-manager  
+  - openshift-kube-scheduler
+  - openshift-etcd
+  - openshift-dns
+  - openshift-ingress
+  - openshift-monitoring
+  - openshift-machine-config-operator
+  - openshift-cluster-version
+  - openshift-authentication
+
+# Critical cluster operators to monitor
+critical_operators:
+  - kube-apiserver
+  - kube-controller-manager
+  - kube-scheduler
+  - etcd
+  - dns
+  - ingress
+  - monitoring
+  - machine-config
+  - authentication
+  - console
+  - storage
+  - network
+
+# Acceptable resource utilization thresholds (percentage)
+resource_thresholds:
+  cpu_warning: 80
+  cpu_critical: 95
+  memory_warning: 85
+  memory_critical: 95
+  disk_warning: 85
+  disk_critical: 95
+
+# Notification settings (optional)
+notification:
+  enabled: false
+  webhook_url: ""
+  slack_channel: "#openshift-alerts"
+  email_recipients: []
+
+# Logging configuration
+log_level: INFO
+log_retention_days: 30
+
+# Report generation settings
+generate_html_report: true
+generate_json_report: true
+report_template: "upgrade-report.j2"
+
+# Custom checks configuration
+custom_checks:
+  enabled: false
+  check_custom_applications: false
+  application_namespaces: []
+  
+# Version specific configurations
+version_specific:
+  # Example for version-specific checks
+  "4.12":
+    deprecated_apis: []
+    required_operators: []
+  "4.13":
+    deprecated_apis: []
+    required_operators: []
+
+# Backup verification (if applicable)
+backup_verification:
+  enabled: false
+  etcd_backup_location: "/var/lib/etcd-backup"
+  check_backup_age_hours: 24
+
+# Network policy validation
+network_validation:
+  enabled: true
+  test_pod_to_pod: true
+  test_ingress: true
+  test_egress: true
+
+# Storage validation
+storage_validation:
+  enabled: true
+  check_pv_health: true
+  check_storage_classes: true
+  test_dynamic_provisioning: false
+
+# Machine config validation
+machine_config_validation:
+  enabled: true
+  max_updating_pools: 1
+  pool_update_timeout: 1800  # 30 minutes
+
+# Certificate validation
+certificate_validation:
+  enabled: true
+  check_expiry_days: 30
+  critical_certs:
+    - kube-apiserver-serving-ca
+    - ingress-ca
+    - service-ca
+
+# Performance validation thresholds
+performance_thresholds:
+  api_response_time_ms: 1000
+  etcd_response_time_ms: 100
+  pod_startup_time_seconds: 30
+
+# External dependencies validation
+external_dependencies:
+  enabled: false
+  registry_connectivity: true
+  ntp_servers: []
+  dns_servers: []
+
+# Vault integration (if using Ansible Vault)
+vault_integration:
+  enabled: false
+  vault_file: "secrets.yml"
+  
+# Development/testing overrides
+development_mode:
+  enabled: false
+  skip_destructive_checks: true
+  mock_external_calls: false

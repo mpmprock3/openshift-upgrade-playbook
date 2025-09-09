@@ -1,0 +1,24 @@
+# Python requirements for OpenShift Upgrade Check Playbook
+# Install with: pip install -r requirements.txt
+
+ansible>=4.0.0
+ansible-core>=2.11.0
+requests>=2.25.0
+urllib3>=1.26.0
+PyYAML>=5.4.0
+Jinja2>=3.0.0
+
+# Optional dependencies for enhanced features
+# Uncomment as needed:
+
+# For Vault integration
+# ansible-vault>=1.0.0
+
+# For enhanced HTTP handling
+# httpx>=0.24.0
+
+# For JSON processing and validation
+# jsonschema>=3.2.0
+
+# For advanced templating
+# jinja2-ansible-filters>=1.3.0

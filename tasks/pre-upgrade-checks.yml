@@ -1,0 +1,297 @@
+---
+# Pre-upgrade checks for OpenShift cluster
+- name: Log pre-upgrade checks start
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - Starting pre-upgrade checks"
+
+- name: Initialize pre-upgrade check results
+  set_fact:
+    pre_check_results: {}
+    pre_check_failures: []
+    pre_check_warnings: []
+
+# Cluster Version and Update Channel Checks
+- name: Get cluster version information
+  uri:
+    url: "{{ openshift_cluster_url }}/apis/config.openshift.io/v1/clusterversions/version"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: cluster_version_info
+  failed_when: false
+
+- name: Parse cluster version
+  set_fact:
+    current_version: "{{ cluster_version_info.json.status.desired.version | default('unknown') }}"
+    update_channel: "{{ cluster_version_info.json.spec.channel | default('unknown') }}"
+    cluster_id: "{{ cluster_version_info.json.spec.clusterID | default('unknown') }}"
+  when: cluster_version_info.status == 200
+
+- name: Log cluster version information
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - Current version: {{ current_version }}, Channel: {{ update_channel }}"
+
+# Node Health Checks
+- name: Get all nodes status
+  uri:
+    url: "{{ openshift_cluster_url }}/api/v1/nodes"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: nodes_status
+  failed_when: false
+
+- name: Analyze node health
+  set_fact:
+    total_nodes: "{{ nodes_status.json.items | length }}"
+    ready_nodes: "{{ nodes_status.json.items | selectattr('status.conditions', 'defined') | 
+                     selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Ready') |
+                     selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') | list | length }}"
+    master_nodes: "{{ nodes_status.json.items | selectattr('metadata.labels', 'defined') |
+                      selectattr('metadata.labels.node-role.kubernetes.io/master', 'defined') | list | length }}"
+    worker_nodes: "{{ nodes_status.json.items | selectattr('metadata.labels', 'defined') |
+                      selectattr('metadata.labels.node-role.kubernetes.io/worker', 'defined') | list | length }}"
+  when: nodes_status.status == 200
+
+- name: Check for unhealthy nodes
+  set_fact:
+    pre_check_failures: "{{ pre_check_failures + ['Unhealthy nodes detected: ' + (total_nodes | int - ready_nodes | int) | string + ' out of ' + total_nodes + ' nodes are not ready'] }}"
+  when: 
+    - nodes_status.status == 200
+    - total_nodes | int != ready_nodes | int
+
+- name: Log node status
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - Nodes: {{ ready_nodes }}/{{ total_nodes }} ready ({{ master_nodes }} masters, {{ worker_nodes }} workers)"
+
+# Cluster Operators Health Check
+- name: Get cluster operators status
+  uri:
+    url: "{{ openshift_cluster_url }}/apis/config.openshift.io/v1/clusteroperators"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: cluster_operators
+  failed_when: false
+
+- name: Check cluster operators health
+  set_fact:
+    degraded_operators: "{{ cluster_operators.json.items | 
+                            selectattr('status.conditions', 'defined') |
+                            selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Degraded') |
+                            selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') |
+                            map(attribute='metadata.name') | list }}"
+    unavailable_operators: "{{ cluster_operators.json.items |
+                               selectattr('status.conditions', 'defined') |
+                               selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Available') |
+                               selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'False') |
+                               map(attribute='metadata.name') | list }}"
+  when: cluster_operators.status == 200
+
+- name: Add degraded operators to failures
+  set_fact:
+    pre_check_failures: "{{ pre_check_failures + ['Degraded cluster operators: ' + degraded_operators | join(', ')] }}"
+  when: 
+    - cluster_operators.status == 200
+    - degraded_operators | length > 0
+
+- name: Add unavailable operators to failures
+  set_fact:
+    pre_check_failures: "{{ pre_check_failures + ['Unavailable cluster operators: ' + unavailable_operators | join(', ')] }}"
+  when:
+    - cluster_operators.status == 200
+    - unavailable_operators | length > 0
+
+# etcd Health Check
+- name: Check etcd cluster health
+  uri:
+    url: "{{ openshift_cluster_url }}/api/v1/namespaces/openshift-etcd/pods"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: etcd_pods
+  failed_when: false
+
+- name: Analyze etcd health
+  set_fact:
+    etcd_running_pods: "{{ etcd_pods.json.items | 
+                           selectattr('metadata.labels.app', 'defined') |
+                           selectattr('metadata.labels.app', 'equalto', 'etcd') |
+                           selectattr('status.phase', 'equalto', 'Running') | list | length }}"
+    etcd_total_pods: "{{ etcd_pods.json.items |
+                         selectattr('metadata.labels.app', 'defined') |
+                         selectattr('metadata.labels.app', 'equalto', 'etcd') | list | length }}"
+  when: etcd_pods.status == 200
+
+- name: Check etcd quorum
+  set_fact:
+    pre_check_failures: "{{ pre_check_failures + ['etcd quorum at risk: only ' + etcd_running_pods | string + ' out of ' + etcd_total_pods | string + ' etcd pods running'] }}"
+  when:
+    - etcd_pods.status == 200
+    - etcd_running_pods | int < ((etcd_total_pods | int / 2) + 1)
+
+# Storage Health Check
+- name: Get persistent volumes status
+  uri:
+    url: "{{ openshift_cluster_url }}/api/v1/persistentvolumes"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: persistent_volumes
+  failed_when: false
+
+- name: Check for failed persistent volumes
+  set_fact:
+    failed_pvs: "{{ persistent_volumes.json.items |
+                    selectattr('status.phase', 'defined') |
+                    selectattr('status.phase', 'equalto', 'Failed') | list | length }}"
+  when: persistent_volumes.status == 200
+
+- name: Add storage warnings if PVs failed
+  set_fact:
+    pre_check_warnings: "{{ pre_check_warnings + ['Storage warning: ' + failed_pvs | string + ' persistent volumes in Failed state'] }}"
+  when:
+    - persistent_volumes.status == 200
+    - failed_pvs | int > 0
+
+# Critical Namespace Health Check
+- name: Check critical namespaces
+  uri:
+    url: "{{ openshift_cluster_url }}/api/v1/namespaces/{{ item }}/pods"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: critical_namespace_pods
+  failed_when: false
+  loop:
+    - openshift-kube-apiserver
+    - openshift-kube-controller-manager
+    - openshift-kube-scheduler
+    - openshift-etcd
+    - openshift-dns
+    - openshift-ingress
+    - openshift-monitoring
+
+- name: Check critical pods health
+  set_fact:
+    unhealthy_namespaces: "{{ unhealthy_namespaces | default([]) + [item.item] }}"
+  when:
+    - item.status == 200
+    - item.json.items | selectattr('status.phase', 'equalto', 'Running') | list | length == 0
+  loop: "{{ critical_namespace_pods.results }}"
+
+- name: Add critical namespace failures
+  set_fact:
+    pre_check_failures: "{{ pre_check_failures + ['Critical namespaces with no running pods: ' + unhealthy_namespaces | join(', ')] }}"
+  when: unhealthy_namespaces is defined and unhealthy_namespaces | length > 0
+
+# Resource Utilization Check
+- name: Get node metrics (if metrics server available)
+  uri:
+    url: "{{ openshift_cluster_url }}/apis/metrics.k8s.io/v1beta1/nodes"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: node_metrics
+  failed_when: false
+
+- name: Check high resource utilization
+  set_fact:
+    pre_check_warnings: "{{ pre_check_warnings + ['Node metrics unavailable - manual resource check recommended'] }}"
+  when: node_metrics.status != 200
+
+# Pending/Stuck Operations Check
+- name: Check for stuck installations or upgrades
+  uri:
+    url: "{{ openshift_cluster_url }}/apis/config.openshift.io/v1/clusterversions/version"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: cluster_version_detailed
+  failed_when: false
+
+- name: Check for progressing operations
+  set_fact:
+    upgrade_in_progress: "{{ cluster_version_detailed.json.status.conditions |
+                             selectattr('type', 'equalto', 'Progressing') |
+                             selectattr('status', 'equalto', 'True') | list | length > 0 }}"
+  when: cluster_version_detailed.status == 200
+
+- name: Add progressing operation warning
+  set_fact:
+    pre_check_failures: "{{ pre_check_failures + ['Cluster upgrade/update already in progress'] }}"
+  when:
+    - cluster_version_detailed.status == 200
+    - upgrade_in_progress | default(false)
+
+# Summary of pre-upgrade checks
+- name: Set pre-upgrade check summary
+  set_fact:
+    pre_check_results:
+      status: "{{ 'FAIL' if pre_check_failures | length > 0 else 'PASS' }}"
+      failures: "{{ pre_check_failures }}"
+      warnings: "{{ pre_check_warnings }}"
+      total_nodes: "{{ total_nodes | default('unknown') }}"
+      ready_nodes: "{{ ready_nodes | default('unknown') }}"
+      current_version: "{{ current_version | default('unknown') }}"
+      cluster_id: "{{ cluster_id | default('unknown') }}"
+
+- name: Log pre-upgrade check results
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - Pre-upgrade checks: {{ pre_check_results.status }}"
+
+- name: Log pre-upgrade failures
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - FAILURE: {{ item }}"
+  loop: "{{ pre_check_failures }}"
+  when: pre_check_failures | length > 0
+
+- name: Log pre-upgrade warnings
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - WARNING: {{ item }}"
+  loop: "{{ pre_check_warnings }}"
+  when: pre_check_warnings | length > 0
+
+- name: Display pre-upgrade check results
+  debug:
+    msg: |
+      Pre-Upgrade Check Results:
+      =========================
+      Status: {{ pre_check_results.status }}
+      Current Version: {{ current_version | default('unknown') }}
+      Nodes: {{ ready_nodes | default('unknown') }}/{{ total_nodes | default('unknown') }} ready
+      Failures: {{ pre_check_failures | length }}
+      Warnings: {{ pre_check_warnings | length }}
+
+- name: Fail if critical pre-upgrade checks failed
+  fail:
+    msg: |
+      Pre-upgrade checks failed. The following issues must be resolved before upgrading:
+      {% for failure in pre_check_failures %}
+      - {{ failure }}
+      {% endfor %}
+  when: 
+    - pre_check_failures | length > 0
+    - fail_on_pre_check_errors | default(true)

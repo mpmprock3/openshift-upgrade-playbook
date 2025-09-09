@@ -1,0 +1,95 @@
+---
+- name: OpenShift Cluster Upgrade Pre and Post Hook Checks
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars/openshift-vars.yml
+  
+  vars:
+    openshift_cluster_url: "{{ cluster_api_url }}"
+    openshift_token: "{{ cluster_token }}"
+    upgrade_mode: "{{ mode | default('both') }}"  # pre, post, or both
+    log_file: "{{ playbook_dir }}/logs/upgrade-checks-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.log"
+    
+  tasks:
+    - name: Create logs directory
+      file:
+        path: "{{ playbook_dir }}/logs"
+        state: directory
+        mode: '0755'
+      
+    - name: Initialize log file
+      copy:
+        content: |
+          OpenShift Cluster Upgrade Checks
+          Date: {{ ansible_date_time.iso8601 }}
+          Cluster: {{ openshift_cluster_url }}
+          Mode: {{ upgrade_mode }}
+          =====================================
+        dest: "{{ log_file }}"
+      
+    - name: Validate required variables
+      assert:
+        that:
+          - openshift_cluster_url is defined
+          - openshift_token is defined
+          - openshift_cluster_url | length > 0
+          - openshift_token | length > 0
+        fail_msg: "OpenShift cluster URL and token must be defined"
+        success_msg: "Required variables validated"
+    
+    - name: Test OpenShift cluster connectivity
+      uri:
+        url: "{{ openshift_cluster_url }}/healthz"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ openshift_token }}"
+        validate_certs: "{{ validate_ssl_certs | default(true) }}"
+        status_code: 200
+        timeout: 30
+      register: cluster_health_check
+      failed_when: false
+      
+    - name: Fail if cluster is not accessible
+      fail:
+        msg: "Cannot connect to OpenShift cluster at {{ openshift_cluster_url }}"
+      when: cluster_health_check.status != 200
+
+    # Pre-upgrade checks
+    - name: Execute pre-upgrade checks
+      include_tasks: tasks/pre-upgrade-checks.yml
+      when: upgrade_mode in ['pre', 'both']
+      tags:
+        - pre-upgrade
+        - pre-checks
+
+    # Post-upgrade checks  
+    - name: Execute post-upgrade checks
+      include_tasks: tasks/post-upgrade-checks.yml
+      when: upgrade_mode in ['post', 'both']
+      tags:
+        - post-upgrade
+        - post-checks
+    
+    - name: Generate summary report
+      template:
+        src: templates/upgrade-report.j2
+        dest: "{{ playbook_dir }}/reports/upgrade-summary-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.html"
+      delegate_to: localhost
+      
+    - name: Display summary
+      debug:
+        msg: |
+          OpenShift Upgrade Checks Complete
+          ================================
+          Mode: {{ upgrade_mode }}
+          Log file: {{ log_file }}
+          Report: {{ playbook_dir }}/reports/upgrade-summary-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.html
+          Status: {% if ansible_failed_task is defined %}FAILED{% else %}SUCCESS{% endif %}
+
+  handlers:
+    - name: Log failure
+      lineinfile:
+        path: "{{ log_file }}"
+        line: "FAILURE: {{ ansible_failed_task.name }} - {{ ansible_failed_result.msg }}"
+      listen: "log_error"

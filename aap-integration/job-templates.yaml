@@ -1,0 +1,150 @@
+---
+# AAP Job Template Definitions
+# Import these via AAP CLI: awx-manage import_export --import job-templates.yaml
+
+- model: awx.jobtemplate
+  fields:
+    name: "OpenShift Pre-Upgrade Checks"
+    description: "Run comprehensive pre-upgrade health checks on OpenShift cluster"
+    organization: 1  # Update with your organization ID
+    project: 1       # Update with your project ID
+    inventory: 1     # Update with your inventory ID
+    playbook: "openshift-upgrade-hooks.yml"
+    credential: 1    # Update with machine credential ID
+    extra_credentials: [2]  # Update with OpenShift token credential ID
+    job_type: "run"
+    verbosity: 1
+    limit: ""
+    job_tags: "pre-checks"
+    skip_tags: ""
+    timeout: 3600  # 1 hour timeout
+    extra_vars: |
+      ---
+      mode: "pre"
+      fail_on_pre_check_errors: true
+    allow_simultaneous: true
+    ask_variables_on_launch: true
+    ask_credential_on_launch: false
+    ask_inventory_on_launch: false
+    ask_limit_on_launch: true
+    survey_enabled: true
+    become_enabled: false
+    host_config_key: ""
+    webhook_service: ""
+
+- model: awx.jobtemplate  
+  fields:
+    name: "OpenShift Post-Upgrade Checks"
+    description: "Validate OpenShift cluster health after upgrade completion"
+    organization: 1  # Update with your organization ID
+    project: 1       # Update with your project ID  
+    inventory: 1     # Update with your inventory ID
+    playbook: "openshift-upgrade-hooks.yml"
+    credential: 1    # Update with machine credential ID
+    extra_credentials: [2]  # Update with OpenShift token credential ID
+    job_type: "run"
+    verbosity: 1
+    limit: ""
+    job_tags: "post-checks"
+    skip_tags: ""
+    timeout: 3600  # 1 hour timeout
+    extra_vars: |
+      ---
+      mode: "post"
+      fail_on_post_check_errors: true
+      post_upgrade_wait_time: 120
+    allow_simultaneous: true
+    ask_variables_on_launch: true
+    ask_credential_on_launch: false
+    ask_inventory_on_launch: false
+    ask_limit_on_launch: true
+    survey_enabled: true
+    become_enabled: false
+    host_config_key: ""
+    webhook_service: ""
+
+- model: awx.jobtemplate
+  fields:
+    name: "OpenShift Complete Upgrade Check Workflow"  
+    description: "Run both pre and post upgrade checks in sequence"
+    organization: 1  # Update with your organization ID
+    project: 1       # Update with your project ID
+    inventory: 1     # Update with your inventory ID  
+    playbook: "openshift-upgrade-hooks.yml"
+    credential: 1    # Update with machine credential ID
+    extra_credentials: [2]  # Update with OpenShift token credential ID
+    job_type: "run"
+    verbosity: 1
+    limit: ""
+    job_tags: ""
+    skip_tags: ""
+    timeout: 7200  # 2 hour timeout
+    extra_vars: |
+      ---
+      mode: "both"
+      fail_on_pre_check_errors: true
+      fail_on_post_check_errors: true
+    allow_simultaneous: false
+    ask_variables_on_launch: true
+    ask_credential_on_launch: false
+    ask_inventory_on_launch: false  
+    ask_limit_on_launch: true
+    survey_enabled: true
+    become_enabled: false
+    host_config_key: ""
+    webhook_service: ""
+
+# Survey Specifications
+- model: awx.survey
+  fields:
+    name: "OpenShift Cluster Configuration"
+    description: "Configure cluster details and check parameters"
+    spec:
+      - question_name: "Cluster Selection"
+        question_description: "Select the OpenShift cluster to check"
+        required: true
+        type: "multiplechoice"
+        variable: "target_cluster"
+        choices: |
+          production-east
+          production-west  
+          staging
+          development
+        default: "production-east"
+
+      - question_name: "Cluster API URL"
+        question_description: "OpenShift cluster API endpoint"
+        required: true
+        type: "text"
+        variable: "cluster_api_url"  
+        default: "https://api.cluster.example.com:6443"
+        min: 10
+        max: 200
+
+      - question_name: "Fail on Errors"
+        question_description: "Should the job fail if health check errors are found?"
+        required: true
+        type: "multiplechoice" 
+        variable: "fail_on_errors"
+        choices: |
+          true
+          false
+        default: "true"
+
+      - question_name: "Post-Upgrade Wait Time"
+        question_description: "Time to wait (seconds) after upgrade before running post checks"
+        required: false
+        type: "integer"
+        variable: "post_upgrade_wait_time"
+        default: 60
+        min: 0
+        max: 600
+
+      - question_name: "Notification Email"
+        question_description: "Email address for results notification (optional)"
+        required: false
+        type: "text"
+        variable: "notification_email"
+        default: ""
+        min: 0
+        max: 100

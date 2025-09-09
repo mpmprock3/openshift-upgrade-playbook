@@ -1,0 +1,381 @@
+---
+# Post-upgrade checks for OpenShift cluster
+- name: Log post-upgrade checks start
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - Starting post-upgrade checks"
+
+- name: Initialize post-upgrade check results
+  set_fact:
+    post_check_results: {}
+    post_check_failures: []
+    post_check_warnings: []
+
+# Wait for cluster to settle after upgrade
+- name: Wait for cluster to stabilize
+  pause:
+    seconds: "{{ post_upgrade_wait_time | default(60) }}"
+    prompt: "Waiting {{ post_upgrade_wait_time | default(60) }} seconds for cluster to stabilize after upgrade..."
+
+# Verify Cluster Version Update
+- name: Get post-upgrade cluster version information
+  uri:
+    url: "{{ openshift_cluster_url }}/apis/config.openshift.io/v1/clusterversions/version"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: post_cluster_version_info
+  failed_when: false
+
+- name: Parse post-upgrade cluster version
+  set_fact:
+    new_version: "{{ post_cluster_version_info.json.status.desired.version | default('unknown') }}"
+    version_history: "{{ post_cluster_version_info.json.status.history | default([]) }}"
+    upgrade_completed: "{{ post_cluster_version_info.json.status.conditions | 
+                           selectattr('type', 'equalto', 'Available') |
+                           selectattr('status', 'equalto', 'True') | list | length > 0 }}"
+    upgrade_progressing: "{{ post_cluster_version_info.json.status.conditions |
+                             selectattr('type', 'equalto', 'Progressing') |
+                             selectattr('status', 'equalto', 'True') | list | length > 0 }}"
+  when: post_cluster_version_info.status == 200
+
+- name: Verify version change
+  set_fact:
+    version_changed: "{{ new_version != current_version }}"
+  when: 
+    - new_version is defined
+    - current_version is defined
+
+- name: Check if upgrade completed successfully
+  set_fact:
+    post_check_failures: "{{ post_check_failures + ['Upgrade still in progress or failed to complete'] }}"
+  when:
+    - post_cluster_version_info.status == 200
+    - upgrade_progressing | default(false)
+
+- name: Log version upgrade status
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - Version upgrade: {{ current_version | default('unknown') }} -> {{ new_version | default('unknown') }}"
+
+# Check Cluster Operators Post-Upgrade
+- name: Get post-upgrade cluster operators status
+  uri:
+    url: "{{ openshift_cluster_url }}/apis/config.openshift.io/v1/clusteroperators"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: post_cluster_operators
+  failed_when: false
+
+- name: Check post-upgrade cluster operators health
+  set_fact:
+    post_degraded_operators: "{{ post_cluster_operators.json.items |
+                                 selectattr('status.conditions', 'defined') |
+                                 selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Degraded') |
+                                 selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') |
+                                 map(attribute='metadata.name') | list }}"
+    post_unavailable_operators: "{{ post_cluster_operators.json.items |
+                                    selectattr('status.conditions', 'defined') |
+                                    selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Available') |
+                                    selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'False') |
+                                    map(attribute='metadata.name') | list }}"
+  when: post_cluster_operators.status == 200
+
+- name: Check for degraded operators post-upgrade
+  set_fact:
+    post_check_failures: "{{ post_check_failures + ['Post-upgrade degraded operators: ' + post_degraded_operators | join(', ')] }}"
+  when:
+    - post_cluster_operators.status == 200
+    - post_degraded_operators | length > 0
+
+- name: Check for unavailable operators post-upgrade
+  set_fact:
+    post_check_failures: "{{ post_check_failures + ['Post-upgrade unavailable operators: ' + post_unavailable_operators | join(', ')] }}"
+  when:
+    - post_cluster_operators.status == 200
+    - post_unavailable_operators | length > 0
+
+# Node Health Post-Upgrade
+- name: Get post-upgrade nodes status
+  uri:
+    url: "{{ openshift_cluster_url }}/api/v1/nodes"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: post_nodes_status
+  failed_when: false
+
+- name: Analyze post-upgrade node health
+  set_fact:
+    post_total_nodes: "{{ post_nodes_status.json.items | length }}"
+    post_ready_nodes: "{{ post_nodes_status.json.items |
+                          selectattr('status.conditions', 'defined') |
+                          selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Ready') |
+                          selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') | list | length }}"
+    post_master_nodes: "{{ post_nodes_status.json.items |
+                           selectattr('metadata.labels', 'defined') |
+                           selectattr('metadata.labels.node-role.kubernetes.io/master', 'defined') | list | length }}"
+    post_worker_nodes: "{{ post_nodes_status.json.items |
+                           selectattr('metadata.labels', 'defined') |
+                           selectattr('metadata.labels.node-role.kubernetes.io/worker', 'defined') | list | length }}"
+  when: post_nodes_status.status == 200
+
+- name: Check for node count changes
+  set_fact:
+    post_check_warnings: "{{ post_check_warnings + ['Node count changed after upgrade: ' + total_nodes | default('0') + ' -> ' + post_total_nodes | string] }}"
+  when:
+    - post_nodes_status.status == 200
+    - total_nodes is defined
+    - post_total_nodes | int != total_nodes | int
+
+- name: Check for unhealthy nodes post-upgrade
+  set_fact:
+    post_check_failures: "{{ post_check_failures + ['Post-upgrade unhealthy nodes: ' + (post_total_nodes | int - post_ready_nodes | int) | string + ' out of ' + post_total_nodes | string + ' nodes not ready'] }}"
+  when:
+    - post_nodes_status.status == 200
+    - post_total_nodes | int != post_ready_nodes | int
+
+# etcd Health Post-Upgrade
+- name: Check post-upgrade etcd cluster health
+  uri:
+    url: "{{ openshift_cluster_url }}/api/v1/namespaces/openshift-etcd/pods"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: post_etcd_pods
+  failed_when: false
+
+- name: Analyze post-upgrade etcd health
+  set_fact:
+    post_etcd_running_pods: "{{ post_etcd_pods.json.items |
+                                selectattr('metadata.labels.app', 'defined') |
+                                selectattr('metadata.labels.app', 'equalto', 'etcd') |
+                                selectattr('status.phase', 'equalto', 'Running') | list | length }}"
+    post_etcd_total_pods: "{{ post_etcd_pods.json.items |
+                              selectattr('metadata.labels.app', 'defined') |
+                              selectattr('metadata.labels.app', 'equalto', 'etcd') | list | length }}"
+  when: post_etcd_pods.status == 200
+
+- name: Check post-upgrade etcd quorum
+  set_fact:
+    post_check_failures: "{{ post_check_failures + ['Post-upgrade etcd quorum at risk: only ' + post_etcd_running_pods | string + ' out of ' + post_etcd_total_pods | string + ' etcd pods running'] }}"
+  when:
+    - post_etcd_pods.status == 200
+    - post_etcd_running_pods | int < ((post_etcd_total_pods | int / 2) + 1)
+
+# API Server Responsiveness Test
+- name: Test API server responsiveness
+  uri:
+    url: "{{ openshift_cluster_url }}/readyz"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    timeout: 10
+  register: api_readiness_check
+  failed_when: false
+  retries: 3
+  delay: 10
+
+- name: Check API server readiness
+  set_fact:
+    post_check_failures: "{{ post_check_failures + ['API server not ready after upgrade'] }}"
+  when: api_readiness_check.status != 200
+
+# Critical Pods Health Check Post-Upgrade
+- name: Check critical pods post-upgrade
+  uri:
+    url: "{{ openshift_cluster_url }}/api/v1/namespaces/{{ item }}/pods"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: post_critical_namespace_pods
+  failed_when: false
+  loop:
+    - openshift-kube-apiserver
+    - openshift-kube-controller-manager
+    - openshift-kube-scheduler
+    - openshift-etcd
+    - openshift-dns
+    - openshift-ingress
+    - openshift-monitoring
+    - openshift-machine-config-operator
+
+- name: Check post-upgrade critical pods health
+  set_fact:
+    post_unhealthy_namespaces: "{{ post_unhealthy_namespaces | default([]) + [item.item] }}"
+  when:
+    - item.status == 200
+    - item.json.items | selectattr('status.phase', 'equalto', 'Running') | list | length == 0
+  loop: "{{ post_critical_namespace_pods.results }}"
+
+- name: Add post-upgrade critical namespace failures
+  set_fact:
+    post_check_failures: "{{ post_check_failures + ['Post-upgrade critical namespaces with no running pods: ' + post_unhealthy_namespaces | join(', ')] }}"
+  when: post_unhealthy_namespaces is defined and post_unhealthy_namespaces | length > 0
+
+# Workload Connectivity Test
+- name: Test cluster DNS resolution
+  uri:
+    url: "{{ openshift_cluster_url }}/api/v1/namespaces/openshift-dns/services"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: dns_services
+  failed_when: false
+
+- name: Check DNS service availability
+  set_fact:
+    post_check_warnings: "{{ post_check_warnings + ['DNS services may be impacted after upgrade'] }}"
+  when: dns_services.status != 200
+
+# Router/Ingress Health Check
+- name: Check ingress controllers
+  uri:
+    url: "{{ openshift_cluster_url }}/apis/operator.openshift.io/v1/ingresscontrollers"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: ingress_controllers
+  failed_when: false
+
+- name: Verify ingress controllers post-upgrade
+  set_fact:
+    available_ingress_controllers: "{{ ingress_controllers.json.items |
+                                      selectattr('status.conditions', 'defined') |
+                                      selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Available') |
+                                      selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') | list | length }}"
+    total_ingress_controllers: "{{ ingress_controllers.json.items | length }}"
+  when: ingress_controllers.status == 200
+
+- name: Check ingress controller health
+  set_fact:
+    post_check_warnings: "{{ post_check_warnings + ['Some ingress controllers not available after upgrade: ' + available_ingress_controllers | string + '/' + total_ingress_controllers | string] }}"
+  when:
+    - ingress_controllers.status == 200
+    - available_ingress_controllers | int < total_ingress_controllers | int
+
+# Machine Config Operator Check
+- name: Check machine config pools status
+  uri:
+    url: "{{ openshift_cluster_url }}/apis/machineconfiguration.openshift.io/v1/machineconfigpools"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: machine_config_pools
+  failed_when: false
+
+- name: Check for updating machine config pools
+  set_fact:
+    updating_pools: "{{ machine_config_pools.json.items |
+                        selectattr('status.conditions', 'defined') |
+                        selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Updating') |
+                        selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') |
+                        map(attribute='metadata.name') | list }}"
+  when: machine_config_pools.status == 200
+
+- name: Add machine config pool warnings
+  set_fact:
+    post_check_warnings: "{{ post_check_warnings + ['Machine config pools still updating: ' + updating_pools | join(', ')] }}"
+  when:
+    - machine_config_pools.status == 200
+    - updating_pools | length > 0
+
+# Storage Health Post-Upgrade
+- name: Get post-upgrade persistent volumes status
+  uri:
+    url: "{{ openshift_cluster_url }}/api/v1/persistentvolumes"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_token }}"
+    validate_certs: "{{ validate_ssl_certs | default(true) }}"
+    return_content: yes
+  register: post_persistent_volumes
+  failed_when: false
+
+- name: Check for failed persistent volumes post-upgrade
+  set_fact:
+    post_failed_pvs: "{{ post_persistent_volumes.json.items |
+                         selectattr('status.phase', 'defined') |
+                         selectattr('status.phase', 'equalto', 'Failed') | list | length }}"
+  when: post_persistent_volumes.status == 200
+
+- name: Add post-upgrade storage warnings
+  set_fact:
+    post_check_warnings: "{{ post_check_warnings + ['Post-upgrade storage warning: ' + post_failed_pvs | string + ' persistent volumes in Failed state'] }}"
+  when:
+    - post_persistent_volumes.status == 200
+    - post_failed_pvs | int > 0
+
+# Summary of post-upgrade checks
+- name: Set post-upgrade check summary
+  set_fact:
+    post_check_results:
+      status: "{{ 'FAIL' if post_check_failures | length > 0 else 'PASS' }}"
+      failures: "{{ post_check_failures }}"
+      warnings: "{{ post_check_warnings }}"
+      old_version: "{{ current_version | default('unknown') }}"
+      new_version: "{{ new_version | default('unknown') }}"
+      version_changed: "{{ version_changed | default(false) }}"
+      total_nodes: "{{ post_total_nodes | default('unknown') }}"
+      ready_nodes: "{{ post_ready_nodes | default('unknown') }}"
+      upgrade_completed: "{{ upgrade_completed | default(false) }}"
+
+- name: Log post-upgrade check results
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - Post-upgrade checks: {{ post_check_results.status }}"
+
+- name: Log post-upgrade failures
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - FAILURE: {{ item }}"
+  loop: "{{ post_check_failures }}"
+  when: post_check_failures | length > 0
+
+- name: Log post-upgrade warnings
+  lineinfile:
+    path: "{{ log_file }}"
+    line: "{{ ansible_date_time.time }} - WARNING: {{ item }}"
+  loop: "{{ post_check_warnings }}"
+  when: post_check_warnings | length > 0
+
+- name: Display post-upgrade check results
+  debug:
+    msg: |
+      Post-Upgrade Check Results:
+      ==========================
+      Status: {{ post_check_results.status }}
+      Version Change: {{ current_version | default('unknown') }} -> {{ new_version | default('unknown') }}
+      Upgrade Completed: {{ upgrade_completed | default('unknown') }}
+      Nodes: {{ post_ready_nodes | default('unknown') }}/{{ post_total_nodes | default('unknown') }} ready
+      Failures: {{ post_check_failures | length }}
+      Warnings: {{ post_check_warnings | length }}
+
+- name: Fail if critical post-upgrade checks failed
+  fail:
+    msg: |
+      Post-upgrade checks failed. The following issues were found:
+      {% for failure in post_check_failures %}
+      - {{ failure }}
+      {% endfor %}
+  when:
+    - post_check_failures | length > 0
+    - fail_on_post_check_errors | default(true)

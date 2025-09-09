@@ -1,0 +1,215 @@
+---
+# AAP Workflow Template for OpenShift Upgrade Process
+# This workflow orchestrates the complete upgrade check process
+
+- model: awx.workflowjobtemplate
+  fields:
+    name: "OpenShift Upgrade Complete Workflow"
+    description: "Complete OpenShift upgrade workflow with pre-checks, approval, and post-checks"
+    organization: 1  # Update with your organization ID
+    inventory: 1     # Update with your inventory ID
+    survey_enabled: true
+    ask_variables_on_launch: true
+    ask_inventory_on_launch: false
+    ask_limit_on_launch: false
+    extra_vars: |
+      ---
+      # Default workflow variables
+      cluster_environment: "production"
+      require_approval: true
+      notification_on_failure: true
+    
+  # Workflow Survey
+  survey_spec:
+    name: "Upgrade Workflow Configuration"
+    description: "Configure the complete upgrade workflow"
+    spec:
+      - question_name: "Target Cluster"
+        question_description: "Select OpenShift cluster for upgrade"
+        required: true
+        type: "multiplechoice"
+        variable: "target_cluster"
+        choices: |
+          prod-east
+          prod-west
+          staging  
+          development
+        default: "staging"
+
+      - question_name: "Environment Type"
+        question_description: "Cluster environment classification"
+        required: true
+        type: "multiplechoice"
+        variable: "cluster_environment"
+        choices: |
+          production
+          staging
+          development
+        default: "staging"
+
+      - question_name: "Require Manual Approval"
+        question_description: "Require manual approval between pre and post checks?"
+        required: true
+        type: "multiplechoice"
+        variable: "require_approval"  
+        choices: |
+          true
+          false
+        default: "true"
+
+      - question_name: "Target OpenShift Version"
+        question_description: "Expected OpenShift version after upgrade (for validation)"
+        required: false
+        type: "text"
+        variable: "expected_version"
+        default: ""
+
+# Workflow Node Definitions
+- model: awx.workflowjobnode
+  fields:
+    workflow_job_template: 1  # Reference to workflow template above
+    unified_job_template: 1   # Pre-upgrade checks job template ID
+    inventory: 1
+    extra_data:
+      mode: "pre"
+      fail_on_pre_check_errors: true
+    success_nodes: [2]  # Connect to approval node on success
+    failure_nodes: [6]  # Connect to failure notification on failure
+    always_nodes: []
+    
+- model: awx.workflowjobnode  # Approval Node
+  fields:
+    workflow_job_template: 1
+    unified_job_template: null  # This will be an approval node
+    inventory: null
+    extra_data: {}
+    success_nodes: [3]  # Connect to manual upgrade step
+    failure_nodes: [6]  # Connect to failure notification 
+    always_nodes: []
+    
+- model: awx.workflowjobnode  # Manual Upgrade Placeholder
+  fields:
+    workflow_job_template: 1
+    unified_job_template: null  # Manual intervention placeholder
+    inventory: null
+    extra_data:
+      action: "manual_upgrade"
+      message: "Perform OpenShift upgrade now. Click PROCEED when upgrade is complete."
+    success_nodes: [4]  # Connect to post-upgrade wait
+    failure_nodes: [6]  # Connect to failure notification
+    always_nodes: []
+
+- model: awx.workflowjobnode  # Post-Upgrade Wait
+  fields:
+    workflow_job_template: 1  
+    unified_job_template: 3   # Wait/pause job template ID
+    inventory: 1
+    extra_data:
+      wait_time: "{{ post_upgrade_wait_time | default(300) }}"
+      message: "Waiting for cluster to stabilize after upgrade..."
+    success_nodes: [5]  # Connect to post-upgrade checks
+    failure_nodes: [6]  # Connect to failure notification
+    always_nodes: []
+
+- model: awx.workflowjobnode  # Post-Upgrade Checks
+  fields:
+    workflow_job_template: 1
+    unified_job_template: 2   # Post-upgrade checks job template ID  
+    inventory: 1
+    extra_data:
+      mode: "post"
+      fail_on_post_check_errors: true
+    success_nodes: [7]  # Connect to success notification
+    failure_nodes: [6]  # Connect to failure notification
+    always_nodes: [8]   # Always generate final report
+
+- model: awx.workflowjobnode  # Failure Notification
+  fields:
+    workflow_job_template: 1
+    unified_job_template: 4   # Notification job template ID
+    inventory: 1
+    extra_data:
+      notification_type: "failure"
+      message: "OpenShift upgrade workflow failed. Check job logs for details."
+    success_nodes: []
+    failure_nodes: []
+    always_nodes: []
+
+- model: awx.workflowjobnode  # Success Notification  
+  fields:
+    workflow_job_template: 1
+    unified_job_template: 4   # Notification job template ID
+    inventory: 1
+    extra_data:
+      notification_type: "success" 
+      message: "OpenShift upgrade workflow completed successfully!"
+    success_nodes: []
+    failure_nodes: []
+    always_nodes: []
+
+- model: awx.workflowjobnode  # Final Report Generation
+  fields:
+    workflow_job_template: 1
+    unified_job_template: 5   # Report generation job template ID
+    inventory: 1
+    extra_data:
+      report_type: "complete_workflow"
+      include_artifacts: true
+    success_nodes: []
+    failure_nodes: []
+    always_nodes: []
+
+---
+# Alternative Simplified Workflow (No Manual Intervention)
+- model: awx.workflowjobtemplate
+  fields:
+    name: "OpenShift Automated Health Check Workflow"
+    description: "Automated health check workflow for scheduled monitoring"
+    organization: 1
+    inventory: 1
+    survey_enabled: true
+    ask_variables_on_launch: false
+    ask_inventory_on_launch: false
+    ask_limit_on_launch: true
+    extra_vars: |
+      ---
+      automated_mode: true
+      fail_on_errors: false  # More lenient for monitoring
+      generate_reports: true
+
+# Simplified workflow nodes
+- model: awx.workflowjobnode  # Pre-checks
+  fields:
+    workflow_job_template: 2  # Reference to automated workflow
+    unified_job_template: 1   # Pre-upgrade checks
+    inventory: 1
+    extra_data:
+      mode: "pre"
+      fail_on_pre_check_errors: false
+    success_nodes: [2]  # Always continue to post-checks
+    failure_nodes: [2]  # Continue even on failure
+    always_nodes: []
+
+- model: awx.workflowjobnode  # Post-checks (for current state validation)
+  fields:
+    workflow_job_template: 2
+    unified_job_template: 2   # Post-upgrade checks (validates current state)
+    inventory: 1  
+    extra_data:
+      mode: "post"
+      fail_on_post_check_errors: false
+    success_nodes: [3]  # Connect to report generation
+    failure_nodes: [3]  # Always generate report
+    always_nodes: []
+
+- model: awx.workflowjobnode  # Report Generation
+  fields:
+    workflow_job_template: 2
+    unified_job_template: 5   # Report generation job template
+    inventory: 1
+    extra_data:
+      report_type: "health_monitoring"
+      email_results: true
+    success_nodes: []
+    failure_nodes: []
+    always_nodes: []

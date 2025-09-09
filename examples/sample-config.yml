@@ -1,0 +1,78 @@
+---
+# Sample OpenShift Configuration
+# =============================
+# Copy this to vars/openshift-vars.yml and customize for your environment
+
+# Cluster Connection Settings
+# ---------------------------
+cluster_api_url: "https://api.example-cluster.openshift.com:6443"
+cluster_token: "sha256~your-token-here"  # Use vault for production!
+validate_ssl_certs: true
+
+# Basic Configuration
+# -------------------
+fail_on_pre_check_errors: true
+fail_on_post_check_errors: true
+post_upgrade_wait_time: 60
+
+# Expected Cluster Configuration
+# -------------------------------
+expected_master_nodes: 3
+expected_worker_nodes: 3
+minimum_etcd_nodes: 3
+
+# Critical Components to Monitor
+# ------------------------------
+critical_namespaces:
+  - openshift-kube-apiserver
+  - openshift-kube-controller-manager
+  - openshift-kube-scheduler
+  - openshift-etcd
+  - openshift-dns
+  - openshift-ingress
+  - openshift-monitoring
+
+critical_operators:
+  - kube-apiserver
+  - kube-controller-manager
+  - kube-scheduler
+  - etcd
+  - dns
+  - ingress
+  - monitoring
+  - machine-config
+  - authentication
+
+# Alerting Thresholds
+# -------------------
+resource_thresholds:
+  cpu_warning: 80
+  cpu_critical: 95
+  memory_warning: 85
+  memory_critical: 95
+
+# Reporting
+# ---------
+generate_html_report: true
+generate_json_report: false
+
+# Example Multi-Environment Setup
+# ===============================
+
+# Development Environment
+# dev_cluster_config: &dev_config
+#   cluster_api_url: "https://api.dev-cluster.example.com:6443"
+#   cluster_token: "{{ vault_dev_token }}"
+#   fail_on_pre_check_errors: false  # More lenient for dev
+#   fail_on_post_check_errors: false
+#   expected_master_nodes: 1
+#   expected_worker_nodes: 2
+
+# Production Environment  
+# prod_cluster_config: &prod_config
+#   cluster_api_url: "https://api.prod-cluster.example.com:6443"
+#   cluster_token: "{{ vault_prod_token }}"
+#   fail_on_pre_check_errors: true   # Strict for production
+#   fail_on_post_check_errors: true
+#   expected_master_nodes: 3
+#   expected_worker_nodes: 6

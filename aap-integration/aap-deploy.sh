@@ -14,8 +14,9 @@
 set -euo pipefail
 
 # Configuration
-AAP_SERVER="${AAP_SERVER:-https://aap.example.com}"
-AAP_USERNAME="${AAP_USERNAME:-admin}"
+AAP_SERVER="${AAP_SERVER:-}"
+AAP_USERNAME="${AAP_USERNAME:-}"
+AAP_PASSWORD="${AAP_PASSWORD:-}"
 AAP_ORG="${AAP_ORG:-Default}"
 GIT_REPO="${GIT_REPO:-https://github.com/your-org/openshift-upgrade-playbook.git}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
@@ -68,14 +69,89 @@ check_prerequisites() {
     success "Prerequisites check completed"
 }
 
+# Collect AAP connection details interactively
+collect_aap_details() {
+    log "Collecting AAP connection details..."
+    echo ""
+    
+    # Get AAP Server URL
+    if [[ -z "$AAP_SERVER" ]]; then
+        echo -e "${BLUE}Enter your AAP server URL:${NC}"
+        echo "Examples:"
+        echo "  - https://automation-controller.apps.cluster.example.com"
+        echo "  - https://aap.company.com"
+        echo ""
+        while [[ -z "$AAP_SERVER" ]]; do
+            read -p "AAP Server URL: " AAP_SERVER
+            if [[ -z "$AAP_SERVER" ]]; then
+                error "AAP Server URL is required"
+            elif [[ ! "$AAP_SERVER" =~ ^https?:// ]]; then
+                warning "URL should start with http:// or https://"
+                read -p "Continue with '$AAP_SERVER'? (y/N): " confirm
+                if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+                    AAP_SERVER=""
+                fi
+            fi
+        done
+    fi
+    
+    # Get AAP Username
+    if [[ -z "$AAP_USERNAME" ]]; then
+        echo ""
+        read -p "AAP Username (default: admin): " AAP_USERNAME
+        AAP_USERNAME="${AAP_USERNAME:-admin}"
+    fi
+    
+    # Get AAP Password
+    if [[ -z "$AAP_PASSWORD" ]]; then
+        echo ""
+        while [[ -z "$AAP_PASSWORD" ]]; do
+            read -s -p "AAP Password for ${AAP_USERNAME}: " AAP_PASSWORD
+            echo ""
+            if [[ -z "$AAP_PASSWORD" ]]; then
+                error "Password is required"
+            fi
+        done
+    fi
+    
+    # Get Organization (optional)
+    echo ""
+    read -p "AAP Organization (default: Default): " input_org
+    if [[ -n "$input_org" ]]; then
+        AAP_ORG="$input_org"
+    fi
+    
+    # Get Git Repository (optional override)
+    echo ""
+    echo -e "${YELLOW}Git repository configuration:${NC}"
+    echo "Current: $GIT_REPO"
+    read -p "Use different repository URL? (leave blank to keep current): " input_repo
+    if [[ -n "$input_repo" ]]; then
+        GIT_REPO="$input_repo"
+    fi
+    
+    # Display summary
+    echo ""
+    log "Configuration Summary:"
+    echo "  AAP Server: $AAP_SERVER"
+    echo "  Username: $AAP_USERNAME"  
+    echo "  Organization: $AAP_ORG"
+    echo "  Git Repository: $GIT_REPO"
+    echo "  Git Branch: $GIT_BRANCH"
+    echo ""
+    
+    read -p "Proceed with these settings? (Y/n): " confirm
+    if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
+        error "Configuration cancelled by user"
+        exit 1
+    fi
+    
+    success "AAP connection details collected"
+}
+
 # Configure AWX CLI
 configure_awx() {
     log "Configuring AWX CLI..."
-    
-    if [[ -z "${AAP_PASSWORD:-}" ]]; then
-        read -s -p "Enter AAP password for ${AAP_USERNAME}: " AAP_PASSWORD
-        echo
-    fi
     
     # Configure AWX CLI
     awx config set \
@@ -339,11 +415,32 @@ setup_schedules() {
     success "Schedules setup completed"
 }
 
+# Display welcome banner
+show_banner() {
+    echo ""
+    echo -e "${BLUE}==========================================================${NC}"
+    echo -e "${BLUE}    AAP Deployment for OpenShift Upgrade Checks${NC}"
+    echo -e "${BLUE}==========================================================${NC}"
+    echo ""
+    echo "This script will deploy the OpenShift upgrade check playbook"
+    echo "to your Red Hat Ansible Automation Platform (AAP) instance."
+    echo ""
+    echo -e "${YELLOW}What this script will create:${NC}"
+    echo "  ✓ AAP Project pointing to your Git repository"
+    echo "  ✓ Job Templates for pre/post upgrade checks"
+    echo "  ✓ Workflow Templates for complete upgrade process"
+    echo "  ✓ Custom Credential Types for OpenShift access"
+    echo "  ✓ Scheduled jobs for automated health checks"
+    echo ""
+}
+
 # Main deployment function
 deploy_to_aap() {
+    show_banner
     log "Starting AAP deployment for OpenShift Upgrade Checks"
     
     check_prerequisites
+    collect_aap_details
     configure_awx
     setup_project
     setup_inventory
@@ -383,14 +480,15 @@ AAP Deployment Script for OpenShift Upgrade Checks
 Usage: $0 [OPTIONS]
 
 Options:
-    --server URL        AAP server URL (default: ${AAP_SERVER})
-    --username USER     AAP username (default: ${AAP_USERNAME})
+    --server URL        AAP server URL
+    --username USER     AAP username
+    --password PASS     AAP password (not recommended, use interactive mode)
     --org ORG          Organization name (default: ${AAP_ORG})
     --repo URL         Git repository URL (default: ${GIT_REPO})
     --branch BRANCH    Git branch (default: ${GIT_BRANCH})
     --help             Show this help message
 
-Environment Variables:
+Environment Variables (optional - script will prompt if not set):
     AAP_SERVER         AAP server URL
     AAP_USERNAME       AAP username
     AAP_PASSWORD       AAP password
@@ -399,9 +497,9 @@ Environment Variables:
     GIT_BRANCH        Git branch
 
 Examples:
-    $0
-    $0 --server https://aap.company.com --org Production
-    AAP_PASSWORD=secret $0
+    $0                                                    # Interactive mode (recommended)
+    $0 --server https://aap.company.com --org Production # Pre-configure some options
+    AAP_SERVER=https://aap.company.com $0                # Set server via env var
 
 EOF
 }
@@ -415,6 +513,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --username)
             AAP_USERNAME="$2"
+            shift 2
+            ;;
+        --password)
+            AAP_PASSWORD="$2"
             shift 2
             ;;
         --org)

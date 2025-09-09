@@ -18,7 +18,7 @@ AAP_SERVER="${AAP_SERVER:-}"
 AAP_USERNAME="${AAP_USERNAME:-}"
 AAP_PASSWORD="${AAP_PASSWORD:-}"
 AAP_ORG="${AAP_ORG:-Default}"
-GIT_REPO="${GIT_REPO:-https://github.com/your-org/openshift-upgrade-playbook.git}"
+GIT_REPO="${GIT_REPO:-https://github.com/mpmprock3/openshift-upgrade-playbook.git}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 PROJECT_NAME="OpenShift Upgrade Checks"
 

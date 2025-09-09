@@ -161,14 +161,13 @@ test_awx_cli() {
     awx config set --key "default.host" --value "${clean_url}"
     awx config set --key "default.username" --value "${AAP_USERNAME}"
     awx config set --key "default.password" --value "${AAP_PASSWORD}"
-    awx config set --key "default.verify_ssl" --value "false"
     
-    # Test AWX CLI connection
+    # Test AWX CLI connection with correct syntax
     log "Testing AWX CLI connection..."
     if awx --conf.host "${clean_url}" \
            --conf.username "${AAP_USERNAME}" \
            --conf.password "${AAP_PASSWORD}" \
-           --conf.verify_ssl false \
+           -k \
            organizations list >/dev/null 2>&1; then
         success "✓ AWX CLI connection successful"
         local org_count
@@ -186,7 +185,7 @@ test_awx_cli() {
         awx --conf.host "${clean_url}" \
             --conf.username "${AAP_USERNAME}" \
             --conf.password "${AAP_PASSWORD}" \
-            --conf.verify_ssl false \
+            -k \
             organizations list 2>&1 || true
         return 1
     fi

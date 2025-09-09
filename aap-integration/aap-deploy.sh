@@ -175,10 +175,7 @@ configure_awx() {
         --key "default.password" \
         --value "${AAP_PASSWORD}"
     
-    # Disable SSL verification if needed (common for self-signed certs)
-    awx config set \
-        --key "default.verify_ssl" \
-        --value "false"
+    # Note: SSL verification will be disabled using -k flag in commands
     
     # Show current configuration (without password)
     log "Current AWX CLI configuration:"
@@ -186,7 +183,7 @@ configure_awx() {
     
     # Test connection with more specific error handling
     log "Testing connection to AAP..."
-    if awx --conf.host "${clean_url}" --conf.username "${AAP_USERNAME}" --conf.password "${AAP_PASSWORD}" --conf.verify_ssl false organizations list > /dev/null 2>&1; then
+    if awx --conf.host "${clean_url}" --conf.username "${AAP_USERNAME}" --conf.password "${AAP_PASSWORD}" -k organizations list > /dev/null 2>&1; then
         success "AWX CLI configured and connected successfully"
     else
         error "Failed to connect to AAP. Debugging information:"
@@ -227,7 +224,7 @@ setup_project() {
     local clean_url="${AAP_SERVER%/}"
     
     local org_id
-    org_id=$(awx --conf.host "${clean_url}" --conf.username "${AAP_USERNAME}" --conf.password "${AAP_PASSWORD}" --conf.verify_ssl false \
+    org_id=$(awx --conf.host "${clean_url}" --conf.username "${AAP_USERNAME}" --conf.password "${AAP_PASSWORD}" -k \
         organizations list --name "${AAP_ORG}" --format json | jq -r '.results[0].id')
     
     if [[ "$org_id" == "null" ]]; then

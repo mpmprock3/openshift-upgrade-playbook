@@ -153,14 +153,17 @@ collect_aap_details() {
 configure_awx() {
     log "Configuring AWX CLI..."
     
+    # Clean up URL (remove trailing slash)
+    local clean_url="${AAP_SERVER%/}"
+    
     # Remove any existing AWX CLI configuration
     rm -rf ~/.awx/cli.cfg ~/.config/awx 2>/dev/null || true
     
     # Set configuration with explicit format
-    log "Setting AAP server: ${AAP_SERVER}"
+    log "Setting AAP server: ${clean_url}"
     awx config set \
         --key "default.host" \
-        --value "${AAP_SERVER}"
+        --value "${clean_url}"
     
     log "Setting username: ${AAP_USERNAME}"
     awx config set \
@@ -183,7 +186,7 @@ configure_awx() {
     
     # Test connection with more specific error handling
     log "Testing connection to AAP..."
-    if awx --conf.host "${AAP_SERVER}" --conf.username "${AAP_USERNAME}" --conf.password "${AAP_PASSWORD}" --conf.verify_ssl false organizations list > /dev/null 2>&1; then
+    if awx --conf.host "${clean_url}" --conf.username "${AAP_USERNAME}" --conf.password "${AAP_PASSWORD}" --conf.verify_ssl false organizations list > /dev/null 2>&1; then
         success "AWX CLI configured and connected successfully"
     else
         error "Failed to connect to AAP. Debugging information:"
@@ -193,12 +196,24 @@ configure_awx() {
         
         # Try a manual curl test
         log "Testing basic connectivity with curl..."
-        if curl -k -s --connect-timeout 10 "${AAP_SERVER}/api/v2/ping/" | grep -q "ping"; then
-            success "AAP server is reachable"
-            error "Authentication or API issue - check username/password"
-        else
+        
+        # Clean up URL (remove trailing slash to avoid double slashes)
+        local clean_url="${AAP_SERVER%/}"
+        local ping_response
+        ping_response=$(curl -k -s --connect-timeout 10 "${clean_url}/api/v2/ping/" 2>/dev/null || echo "CURL_FAILED")
+        
+        if echo "$ping_response" | grep -q -E '"version"|"ha"|"instances"'; then
+            success "AAP server is reachable and responding"
+            local aap_version=$(echo "$ping_response" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+            echo "  AAP Version: ${aap_version:-unknown}"
+            error "API is accessible but authentication failed - check username/password"
+        elif [[ "$ping_response" == "CURL_FAILED" ]]; then
             error "Cannot reach AAP server - check URL and network connectivity"
-            echo "  Trying: curl -k ${AAP_SERVER}/api/v2/ping/"
+            echo "  Trying: curl -k ${clean_url}/api/v2/ping/"
+        else
+            warning "AAP server responded but format unexpected"
+            echo "  Response: ${ping_response:0:200}..."
+            error "Check if URL points to correct AAP instance"
         fi
         exit 1
     fi
@@ -208,8 +223,12 @@ configure_awx() {
 setup_project() {
     log "Setting up AAP project..."
     
+    # Use clean URL
+    local clean_url="${AAP_SERVER%/}"
+    
     local org_id
-    org_id=$(awx organizations list --name "${AAP_ORG}" --format json | jq -r '.results[0].id')
+    org_id=$(awx --conf.host "${clean_url}" --conf.username "${AAP_USERNAME}" --conf.password "${AAP_PASSWORD}" --conf.verify_ssl false \
+        organizations list --name "${AAP_ORG}" --format json | jq -r '.results[0].id')
     
     if [[ "$org_id" == "null" ]]; then
         error "Organization '${AAP_ORG}' not found"

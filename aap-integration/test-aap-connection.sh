@@ -55,12 +55,15 @@ collect_details() {
 test_connectivity() {
     log "Testing basic connectivity to ${AAP_SERVER}..."
     
+    # Clean up URL (remove trailing slash)
+    local clean_url="${AAP_SERVER%/}"
+    
     # Test 1: Basic URL reachability
-    if curl -k -s --connect-timeout 10 --max-time 30 "${AAP_SERVER}" >/dev/null 2>&1; then
+    if curl -k -s --connect-timeout 10 --max-time 30 "${clean_url}" >/dev/null 2>&1; then
         success "✓ AAP server is reachable"
     else
         error "✗ Cannot reach AAP server"
-        echo "  URL: ${AAP_SERVER}"
+        echo "  URL: ${clean_url}"
         echo "  Check if URL is correct and server is running"
         return 1
     fi
@@ -68,25 +71,34 @@ test_connectivity() {
     # Test 2: AAP API ping endpoint
     log "Testing AAP API ping endpoint..."
     local ping_response
-    ping_response=$(curl -k -s --connect-timeout 10 "${AAP_SERVER}/api/v2/ping/" 2>/dev/null || echo "FAILED")
+    ping_response=$(curl -k -s --connect-timeout 10 "${clean_url}/api/v2/ping/" 2>/dev/null || echo "FAILED")
     
-    if echo "$ping_response" | grep -q "ping"; then
+    if echo "$ping_response" | grep -q -E '"version"|"ha"|"instances"'; then
         success "✓ AAP API is responding"
+        local aap_version=$(echo "$ping_response" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+        echo "  AAP Version: ${aap_version:-unknown}"
+        
+        # Show cluster info
+        local ha_status=$(echo "$ping_response" | grep -o '"ha":[^,]*' | cut -d':' -f2)
+        echo "  High Availability: ${ha_status:-unknown}"
+        
+        local instance_count=$(echo "$ping_response" | grep -o '"instances":\[[^]]*\]' | grep -o '{"node"' | wc -l | tr -d ' ')
+        echo "  Active Instances: ${instance_count:-0}"
     else
-        warning "⚠ AAP API ping endpoint not accessible"
-        echo "  Response: $ping_response"
-        echo "  This might be normal if AAP requires authentication for all endpoints"
+        warning "⚠ AAP API ping endpoint response unexpected"
+        echo "  Response: ${ping_response:0:200}..."
+        echo "  This might indicate authentication requirements"
     fi
     
     # Test 3: API version endpoint  
     log "Testing API version endpoint..."
     local version_response
-    version_response=$(curl -k -s --connect-timeout 10 "${AAP_SERVER}/api/v2/" 2>/dev/null || echo "FAILED")
+    version_response=$(curl -k -s --connect-timeout 10 "${clean_url}/api/v2/" 2>/dev/null || echo "FAILED")
     
     if echo "$version_response" | grep -q "current_version\|description"; then
         success "✓ AAP API v2 is accessible"
     else
-        warning "⚠ AAP API v2 endpoint not accessible without auth"
+        warning "⚠ AAP API v2 endpoint requires authentication"
     fi
 }
 
@@ -94,19 +106,33 @@ test_connectivity() {
 test_authentication() {
     log "Testing authentication..."
     
+    # Clean up URL
+    local clean_url="${AAP_SERVER%/}"
+    
     # Test with curl first
     local auth_test
     auth_test=$(curl -k -s --connect-timeout 10 \
         -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-        "${AAP_SERVER}/api/v2/me/" 2>/dev/null || echo "AUTH_FAILED")
+        "${clean_url}/api/v2/me/" 2>/dev/null || echo "AUTH_FAILED")
     
     if echo "$auth_test" | grep -q "username\|id"; then
         success "✓ Authentication successful via curl"
-        echo "  User info: $(echo "$auth_test" | grep -o '"username":"[^"]*"' || echo "Username not found")"
+        local username=$(echo "$auth_test" | grep -o '"username":"[^"]*"' | cut -d'"' -f4)
+        local user_id=$(echo "$auth_test" | grep -o '"id":[^,]*' | cut -d':' -f2)
+        echo "  Authenticated as: ${username:-unknown} (ID: ${user_id:-unknown})"
     else
         error "✗ Authentication failed via curl"
-        echo "  Response: $auth_test"
+        echo "  Response: ${auth_test:0:200}..."
         echo "  Check username and password"
+        
+        # Try to determine if it's a credential issue or something else
+        if echo "$auth_test" | grep -q "401\|403\|Unauthorized\|Forbidden"; then
+            error "  Likely cause: Invalid credentials"
+        elif echo "$auth_test" | grep -q "404\|Not Found"; then
+            error "  Likely cause: Wrong API endpoint or AAP version"
+        else
+            error "  Likely cause: Network or server issue"
+        fi
         return 1
     fi
 }
@@ -130,24 +156,34 @@ test_awx_cli() {
     
     # Configure AWX CLI
     log "Configuring AWX CLI..."
-    awx config set --key "default.host" --value "${AAP_SERVER}"
+    local clean_url="${AAP_SERVER%/}"
+    
+    awx config set --key "default.host" --value "${clean_url}"
     awx config set --key "default.username" --value "${AAP_USERNAME}"
     awx config set --key "default.password" --value "${AAP_PASSWORD}"
     awx config set --key "default.verify_ssl" --value "false"
     
     # Test AWX CLI connection
     log "Testing AWX CLI connection..."
-    if awx organizations list >/dev/null 2>&1; then
+    if awx --conf.host "${clean_url}" \
+           --conf.username "${AAP_USERNAME}" \
+           --conf.password "${AAP_PASSWORD}" \
+           --conf.verify_ssl false \
+           organizations list >/dev/null 2>&1; then
         success "✓ AWX CLI connection successful"
         local org_count
         org_count=$(awx organizations list --format json 2>/dev/null | jq length 2>/dev/null || echo "unknown")
         echo "  Found $org_count organization(s)"
+        
+        # Show available organizations
+        log "Available organizations:"
+        awx organizations list --format json 2>/dev/null | jq -r '.results[]? | "  - \(.name) (ID: \(.id))"' 2>/dev/null || echo "  Could not list organizations"
     else
         error "✗ AWX CLI connection failed"
         
         # Show more details
         log "Attempting direct AWX command with explicit parameters..."
-        awx --conf.host "${AAP_SERVER}" \
+        awx --conf.host "${clean_url}" \
             --conf.username "${AAP_USERNAME}" \
             --conf.password "${AAP_PASSWORD}" \
             --conf.verify_ssl false \

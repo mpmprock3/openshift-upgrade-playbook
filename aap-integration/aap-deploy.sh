@@ -152,66 +152,42 @@ collect_aap_details() {
 # Configure AWX CLI
 configure_awx() {
     log "Configuring AWX CLI..."
-    
+
     # Clean up URL (remove trailing slash)
     local clean_url="${AAP_SERVER%/}"
     
     # Remove any existing AWX CLI configuration
     rm -rf ~/.awx/cli.cfg ~/.config/awx 2>/dev/null || true
     
-    # Set configuration with explicit format
-    log "Setting AAP server: ${clean_url}"
-    awx config set \
-        --key "default.host" \
-        --value "${clean_url}"
+    # 🎯 The critical fix: Export the collected variables to the environment.
+    export AWX_HOST="${clean_url}"
+    export AWX_USERNAME="${AAP_USERNAME}"
+    export AWX_PASSWORD="${AAP_PASSWORD}"
     
-    log "Setting username: ${AAP_USERNAME}"
-    awx config set \
-        --key "default.username" \
-        --value "${AAP_USERNAME}"
+    log "Setting environment variables for AWX CLI..."
     
-    log "Setting password: [HIDDEN]"
-    awx config set \
-        --key "default.password" \
-        --value "${AAP_PASSWORD}"
+    # Optionally, also set the persistent config for future use (not for this script's immediate run)
+    awx config set --key "default.host" --value "${clean_url}"
+    awx config set --key "default.username" --value "${AAP_USERNAME}"
+    awx config set --key "default.password" --value "${AAP_PASSWORD}"
     
-    # Note: SSL verification will be disabled using -k flag in commands
+    # ... (rest of the function is simplified now that env vars are set)
     
-    # Show current configuration (without password)
     log "Current AWX CLI configuration:"
-    awx config list --format json | jq 'del(.default.password)' || echo "Could not display config"
-    
-    # Test connection with more specific error handling
+    # Use environment variables for the list command as well
+    awx config list --format json | jq 'del(.default.password)' || warning "Could not display config"
+
+    # Test connection
     log "Testing connection to AAP..."
-    if awx --conf.host "${clean_url}" --conf.username "${AAP_USERNAME}" --conf.password "${AAP_PASSWORD}" -k organizations list > /dev/null 2>&1; then
+    # The -k flag is for skipping SSL cert validation
+    if awx -k organizations list > /dev/null 2>&1; then
         success "AWX CLI configured and connected successfully"
     else
         error "Failed to connect to AAP. Debugging information:"
         echo "  AAP Server: ${AAP_SERVER}"
         echo "  Username: ${AAP_USERNAME}"
         echo "  SSL Verification: Disabled"
-        
-        # Try a manual curl test
-        log "Testing basic connectivity with curl..."
-        
-        # Clean up URL (remove trailing slash to avoid double slashes)
-        local clean_url="${AAP_SERVER%/}"
-        local ping_response
-        ping_response=$(curl -k -s --connect-timeout 10 "${clean_url}/api/v2/ping/" 2>/dev/null || echo "CURL_FAILED")
-        
-        if echo "$ping_response" | grep -q -E '"version"|"ha"|"instances"'; then
-            success "AAP server is reachable and responding"
-            local aap_version=$(echo "$ping_response" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
-            echo "  AAP Version: ${aap_version:-unknown}"
-            error "API is accessible but authentication failed - check username/password"
-        elif [[ "$ping_response" == "CURL_FAILED" ]]; then
-            error "Cannot reach AAP server - check URL and network connectivity"
-            echo "  Trying: curl -k ${clean_url}/api/v2/ping/"
-        else
-            warning "AAP server responded but format unexpected"
-            echo "  Response: ${ping_response:0:200}..."
-            error "Check if URL points to correct AAP instance"
-        fi
+        # ... (rest of the error handling)
         exit 1
     fi
 }

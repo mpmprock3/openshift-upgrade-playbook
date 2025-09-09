@@ -153,24 +153,53 @@ collect_aap_details() {
 configure_awx() {
     log "Configuring AWX CLI..."
     
-    # Configure AWX CLI
+    # Remove any existing AWX CLI configuration
+    rm -rf ~/.awx/cli.cfg ~/.config/awx 2>/dev/null || true
+    
+    # Set configuration with explicit format
+    log "Setting AAP server: ${AAP_SERVER}"
     awx config set \
         --key "default.host" \
         --value "${AAP_SERVER}"
     
+    log "Setting username: ${AAP_USERNAME}"
     awx config set \
         --key "default.username" \
         --value "${AAP_USERNAME}"
     
+    log "Setting password: [HIDDEN]"
     awx config set \
         --key "default.password" \
         --value "${AAP_PASSWORD}"
     
-    # Test connection
-    if awx organizations list > /dev/null 2>&1; then
-        success "AWX CLI configured successfully"
+    # Disable SSL verification if needed (common for self-signed certs)
+    awx config set \
+        --key "default.verify_ssl" \
+        --value "false"
+    
+    # Show current configuration (without password)
+    log "Current AWX CLI configuration:"
+    awx config list --format json | jq 'del(.default.password)' || echo "Could not display config"
+    
+    # Test connection with more specific error handling
+    log "Testing connection to AAP..."
+    if awx --conf.host "${AAP_SERVER}" --conf.username "${AAP_USERNAME}" --conf.password "${AAP_PASSWORD}" --conf.verify_ssl false organizations list > /dev/null 2>&1; then
+        success "AWX CLI configured and connected successfully"
     else
-        error "Failed to connect to AAP. Please check credentials."
+        error "Failed to connect to AAP. Debugging information:"
+        echo "  AAP Server: ${AAP_SERVER}"
+        echo "  Username: ${AAP_USERNAME}"
+        echo "  SSL Verification: Disabled"
+        
+        # Try a manual curl test
+        log "Testing basic connectivity with curl..."
+        if curl -k -s --connect-timeout 10 "${AAP_SERVER}/api/v2/ping/" | grep -q "ping"; then
+            success "AAP server is reachable"
+            error "Authentication or API issue - check username/password"
+        else
+            error "Cannot reach AAP server - check URL and network connectivity"
+            echo "  Trying: curl -k ${AAP_SERVER}/api/v2/ping/"
+        fi
         exit 1
     fi
 }

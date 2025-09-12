@@ -14,10 +14,10 @@
 # Cluster Version and Update Channel Checks
 - name: Get cluster version information
   uri:
-    url: "{{ openshift_cluster_url }}/apis/config.openshift.io/v1/clusterversions/version"
+    url: "{{ lookup('env', 'K8S_AUTH_HOST') | default(openshift_cluster_url) }}/apis/config.openshift.io/v1/clusterversions/version"
     method: GET
     headers:
-      Authorization: "Bearer {{ openshift_token }}"
+      Authorization: "Bearer {{ lookup('env', 'K8S_AUTH_API_KEY') | default(openshift_token) }}"
     validate_certs: "{{ validate_ssl_certs | default(true) }}"
     return_content: yes
   register: cluster_version_info
@@ -38,10 +38,10 @@
 # Node Health Checks
 - name: Get all nodes status
   uri:
-    url: "{{ openshift_cluster_url }}/api/v1/nodes"
+    url: "{{ lookup('env', 'K8S_AUTH_HOST') | default(openshift_cluster_url) }}/api/v1/nodes"
     method: GET
     headers:
-      Authorization: "Bearer {{ openshift_token }}"
+      Authorization: "Bearer {{ lookup('env', 'K8S_AUTH_API_KEY') | default(openshift_token) }}"
     validate_certs: "{{ validate_ssl_certs | default(true) }}"
     return_content: yes
   register: nodes_status
@@ -74,10 +74,10 @@
 # Cluster Operators Health Check
 - name: Get cluster operators status
   uri:
-    url: "{{ openshift_cluster_url }}/apis/config.openshift.io/v1/clusteroperators"
+    url: "{{ lookup('env', 'K8S_AUTH_HOST') | default(openshift_cluster_url) }}/apis/config.openshift.io/v1/clusteroperators"
     method: GET
     headers:
-      Authorization: "Bearer {{ openshift_token }}"
+      Authorization: "Bearer {{ lookup('env', 'K8S_AUTH_API_KEY') | default(openshift_token) }}"
     validate_certs: "{{ validate_ssl_certs | default(true) }}"
     return_content: yes
   register: cluster_operators
@@ -114,10 +114,10 @@
 # etcd Health Check
 - name: Check etcd cluster health
   uri:
-    url: "{{ openshift_cluster_url }}/api/v1/namespaces/openshift-etcd/pods"
+    url: "{{ lookup('env', 'K8S_AUTH_HOST') | default(openshift_cluster_url) }}/api/v1/namespaces/openshift-etcd/pods"
     method: GET
     headers:
-      Authorization: "Bearer {{ openshift_token }}"
+      Authorization: "Bearer {{ lookup('env', 'K8S_AUTH_API_KEY') | default(openshift_token) }}"
     validate_certs: "{{ validate_ssl_certs | default(true) }}"
     return_content: yes
   register: etcd_pods
@@ -144,10 +144,10 @@
 # Storage Health Check
 - name: Get persistent volumes status
   uri:
-    url: "{{ openshift_cluster_url }}/api/v1/persistentvolumes"
+    url: "{{ lookup('env', 'K8S_AUTH_HOST') | default(openshift_cluster_url) }}/api/v1/persistentvolumes"
     method: GET
     headers:
-      Authorization: "Bearer {{ openshift_token }}"
+      Authorization: "Bearer {{ lookup('env', 'K8S_AUTH_API_KEY') | default(openshift_token) }}"
     validate_certs: "{{ validate_ssl_certs | default(true) }}"
     return_content: yes
   register: persistent_volumes
@@ -170,10 +170,10 @@
 # Critical Namespace Health Check
 - name: Check critical namespaces
   uri:
-    url: "{{ openshift_cluster_url }}/api/v1/namespaces/{{ item }}/pods"
+    url: "{{ lookup('env', 'K8S_AUTH_HOST') | default(openshift_cluster_url) }}/api/v1/namespaces/{{ item }}/pods"
     method: GET
     headers:
-      Authorization: "Bearer {{ openshift_token }}"
+      Authorization: "Bearer {{ lookup('env', 'K8S_AUTH_API_KEY') | default(openshift_token) }}"
     validate_certs: "{{ validate_ssl_certs | default(true) }}"
     return_content: yes
   register: critical_namespace_pods
@@ -203,10 +203,10 @@
 # Resource Utilization Check
 - name: Get node metrics (if metrics server available)
   uri:
-    url: "{{ openshift_cluster_url }}/apis/metrics.k8s.io/v1beta1/nodes"
+    url: "{{ lookup('env', 'K8S_AUTH_HOST') | default(openshift_cluster_url) }}/apis/metrics.k8s.io/v1beta1/nodes"
     method: GET
     headers:
-      Authorization: "Bearer {{ openshift_token }}"
+      Authorization: "Bearer {{ lookup('env', 'K8S_AUTH_API_KEY') | default(openshift_token) }}"
     validate_certs: "{{ validate_ssl_certs | default(true) }}"
     return_content: yes
   register: node_metrics
@@ -220,10 +220,10 @@
 # Pending/Stuck Operations Check
 - name: Check for stuck installations or upgrades
   uri:
-    url: "{{ openshift_cluster_url }}/apis/config.openshift.io/v1/clusterversions/version"
+    url: "{{ lookup('env', 'K8S_AUTH_HOST') | default(openshift_cluster_url) }}/apis/config.openshift.io/v1/clusterversions/version"
     method: GET
     headers:
-      Authorization: "Bearer {{ openshift_token }}"
+      Authorization: "Bearer {{ lookup('env', 'K8S_AUTH_API_KEY') | default(openshift_token) }}"
     validate_certs: "{{ validate_ssl_certs | default(true) }}"
     return_content: yes
   register: cluster_version_detailed

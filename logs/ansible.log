@@ -1,0 +1,18 @@
+2025-09-12 15:07:31,513 p=47414 u=mapandey n=ansible | PLAY [OpenShift Cluster Upgrade Pre and Post Hook Checks] *******************************************
+2025-09-12 15:07:31,521 p=47414 u=mapandey n=ansible | TASK [Create logs directory] ************************************************************************
+2025-09-12 15:07:31,737 p=47414 u=mapandey n=ansible | ok: [localhost]
+2025-09-12 15:07:31,740 p=47414 u=mapandey n=ansible | TASK [Initialize log file] **************************************************************************
+2025-09-12 15:07:31,753 p=47414 u=mapandey n=ansible | fatal: [localhost]: FAILED! => 
+  msg: |-
+    The task includes an option with an undefined variable. The error was: 'ansible_date_time' is undefined. 'ansible_date_time' is undefined
+  
+    The error appears to be in '/Users/mapandey/openshift-upgrade-playbook/openshift-upgrade-hooks.yml': line 21, column 7, but may
+    be elsewhere in the file depending on the exact syntax problem.
+  
+    The offending line appears to be:
+  
+  
+        - name: Initialize log file
+          ^ here
+2025-09-12 15:07:31,753 p=47414 u=mapandey n=ansible | PLAY RECAP ******************************************************************************************
+2025-09-12 15:07:31,753 p=47414 u=mapandey n=ansible | localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   

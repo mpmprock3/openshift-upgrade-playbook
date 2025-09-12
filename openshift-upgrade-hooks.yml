@@ -6,8 +6,8 @@
     - vars/openshift-vars.yml
   
   vars:
-    openshift_cluster_url: "{{ cluster_api_url }}"
-    openshift_token: "{{ cluster_token }}"
+    openshift_cluster_url: "{{ lookup('env', 'K8S_AUTH_HOST') | default(cluster_api_url) }}"
+    openshift_token: "{{ lookup('env', 'K8S_AUTH_API_KEY') | default(cluster_token) }}"
     upgrade_mode: "{{ mode | default('both') }}"  # pre, post, or both
     log_file: "{{ playbook_dir }}/logs/upgrade-checks-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.log"
     

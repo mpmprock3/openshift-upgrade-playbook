@@ -3,8 +3,8 @@
 # =========================================
 
 # Cluster connection details
-cluster_api_url: "https://api.your-cluster.example.com:6443"
-cluster_token: "{{ vault_openshift_token | default('YOUR_OPENSHIFT_TOKEN_HERE') }}"
+cluster_api_url: "{{ lookup('env', 'K8S_AUTH_HOST') | default('https://api.your-cluster.example.com:6443') }}"
+cluster_token: "{{ lookup('env', 'K8S_AUTH_API_KEY') | default(vault_openshift_token | default('YOUR_OPENSHIFT_TOKEN_HERE')) }}"
 validate_ssl_certs: true
 
 # Upgrade behavior settings
